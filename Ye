@@ -1,12 +1,18 @@
 -- ===== HWID CHECK (put at the very top of your main loader) =====
 do
-    local API_URL = "https://2597-81844dfae1.app.ravenhost.space"   -- API_BASE_URL + /api/script
-    local USER_ID = tostring((getgenv and getgenv().Userid) or Userid or "")
+    local API_BASE = "https://2597-81844dfae1.app.ravenhost.space"
+    local API_URL = API_BASE .. "/api/script" -- POST endpoint that checks hwids.txt
 
     local HttpService = game:GetService("HttpService")
     local httpRequest = (syn and syn.request) or (http and http.request) or http_request or request
     if not httpRequest then return warn("[HWID] Executor has no HTTP support.") end
+
+    -- Set by the wrapper you get from "Get Script":  Userid="123"; loadstring(...)
+    local USER_ID = tostring((getgenv and getgenv().Userid) or Userid or ""):match("^%s*(.-)%s*$")
     if USER_ID == "" then return warn("[HWID] Userid missing. Use the script from Get Script.") end
+    if not USER_ID:match("^%d+$") or #USER_ID > 20 then
+        return warn("[HWID] Invalid Userid (must be your Discord ID, digits only).")
+    end
 
     local function getHwid()
         if type(gethwid) == "function" then
@@ -20,17 +26,42 @@ do
     local hwid = getHwid()
     if not hwid then return warn("[HWID] Could not read HWID.") end
 
+    -- Mirror of the server's HWID_RE: 8-256 chars from  A-Za-z0-9 . _ - + = / { }
+    if #hwid < 8 or #hwid > 256 or hwid:match("[^A-Za-z0-9%.%_%+%=%/%{%}%-]") then
+        return warn("[HWID] Executor returned an HWID in an unexpected format.")
+    end
+
     local ok, res = pcall(httpRequest, {
-        Url = API_URL, Method = "POST",
+        Url = API_URL,
+        Method = "POST",
         Headers = { ["Content-Type"] = "application/json" },
         Body = HttpService:JSONEncode({ userid = USER_ID, hwid = hwid }),
     })
+
+    -- Executors differ on response field casing (Body vs body)
     local data
-    if ok and res then pcall(function() data = HttpService:JSONDecode(res.Body) end) end
+    if ok and type(res) == "table" then
+        local body = res.Body or res.body
+        if type(body) == "string" and #body > 0 then
+            pcall(function() data = HttpService:JSONDecode(body) end)
+        end
+    end
 
     if not (data and data.success) then
-        return warn("[HWID] " .. tostring(data and data.message or "HWID check failed. Register first."))
+        local reason
+        if data and type(data.message) == "string" then
+            reason = data.message -- server's own message, e.g. "HWID not registered or does not match. Register first."
+        elseif not ok or type(res) ~= "table" then
+            reason = "HWID check failed (request error). Register first."
+        else
+            reason = "HWID check failed (HTTP " .. tostring(res.StatusCode or res.status or res.code or "?") .. "). Register first."
+        end
+        return warn("[HWID] " .. reason)
     end
+
+    -- Success: fall through and let the main script below run.
+    -- Do NOT loadstring(data.script)() here -- the server's "script" field is the
+    -- wrapper that re-loads this same loader, so it would loop this check forever.
 end
 -- ===== END HWID CHECK =====
 
