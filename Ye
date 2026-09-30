@@ -1,0 +1,37 @@
+-- ===== HWID CHECK (put at the very top of your main loader) =====
+do
+    local API_URL = "https://2597-81844dfae1.app.ravenhost.space/api"   -- API_BASE_URL + /api/script
+    local USER_ID = tostring((getgenv and getgenv().Userid) or Userid or "")
+
+    local HttpService = game:GetService("HttpService")
+    local httpRequest = (syn and syn.request) or (http and http.request) or http_request or request
+    if not httpRequest then return warn("[HWID] Executor has no HTTP support.") end
+    if USER_ID == "" then return warn("[HWID] Userid missing. Use the script from Get Script.") end
+
+    local function getHwid()
+        if type(gethwid) == "function" then
+            local ok, h = pcall(gethwid)
+            if ok and type(h) == "string" and #h > 0 then return h end
+        end
+        local ok, id = pcall(function() return game:GetService("RbxAnalyticsService"):GetClientId() end)
+        if ok and type(id) == "string" and #id > 0 then return id end
+    end
+
+    local hwid = getHwid()
+    if not hwid then return warn("[HWID] Could not read HWID.") end
+
+    local ok, res = pcall(httpRequest, {
+        Url = API_URL, Method = "POST",
+        Headers = { ["Content-Type"] = "application/json" },
+        Body = HttpService:JSONEncode({ userid = USER_ID, hwid = hwid }),
+    })
+    local data
+    if ok and res then pcall(function() data = HttpService:JSONDecode(res.Body) end) end
+
+    if not (data and data.success) then
+        return warn("[HWID] " .. tostring(data and data.message or "HWID check failed. Register first."))
+    end
+end
+-- ===== END HWID CHECK =====
+
+-- your main script continues here
