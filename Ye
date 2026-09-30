@@ -1,6 +1,6 @@
 -- ===== HWID CHECK (put at the very top of your main loader) =====
 do
-    local API_URL = "https://2597-81844dfae1.app.ravenhost.space/api"   -- API_BASE_URL + /api/script
+    local API_URL = "https://2597-81844dfae1.app.ravenhost.space"   -- API_BASE_URL + /api/script
     local USER_ID = tostring((getgenv and getgenv().Userid) or Userid or "")
 
     local HttpService = game:GetService("HttpService")
