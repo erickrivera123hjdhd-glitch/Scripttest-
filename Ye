@@ -35,3 +35,4 @@ end
 -- ===== END HWID CHECK =====
 
 -- your main script continues here
+loadstring(game:HttpGet("https://raw.githubusercontent.com/erickrivera123hjdhd-glitch/Bathman-lib/refs/heads/Main/CrimsonUI/examples/example.lua"))()
