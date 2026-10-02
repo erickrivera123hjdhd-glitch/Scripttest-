@@ -4,14 +4,40 @@ do
     local API_URL = API_BASE .. "/api/script" -- POST endpoint that checks hwids.txt
 
     local HttpService = game:GetService("HttpService")
-    local httpRequest = (syn and syn.request) or (http and http.request) or http_request or request
-    if not httpRequest then return warn("[HWID] Executor has no HTTP support.") end
 
-    -- Set by the wrapper you get from "Get Script":  Userid="123"; loadstring(...)
-    local USER_ID = tostring((getgenv and getgenv().Userid) or Userid or ""):match("^%s*(.-)%s*$")
-    if USER_ID == "" then return warn("[HWID] Userid missing. Use the script from Get Script.") end
-    if not USER_ID:match("^%d+$") or #USER_ID > 20 then
-        return warn("[HWID] Invalid Userid (must be your Discord ID, digits only).")
+    -- A few executors have no global warn(); degrade to print instead of erroring.
+    local function notify(msg)
+        if warn then warn(msg) else print(msg) end
+    end
+
+    local httpRequest = (syn and syn.request) or (http and http.request) or http_request or request
+    if not httpRequest then return notify("[HWID] Executor has no HTTP support.") end
+
+    -- Mirror of the server's HWID_RE: 8-256 chars from  A-Za-z0-9 . _ - + = / { }
+    -- (#s counts bytes; identical to the server's character count because the
+    --  allowed charset is pure ASCII)
+    local function isValidHwid(s)
+        return type(s) == "string"
+            and #s >= 8
+            and #s <= 256
+            and not s:match("[^A-Za-z0-9%.%_%+%=%/%{%}%-]")
+    end
+
+    -- `key` is set by the wrapper you get from "Get Script":  key="<hwid>"; loadstring(...)
+    -- It carries the HWID value embedded when that wrapper was generated.
+    local rawKey
+    do
+        local okEnv, env = pcall(getgenv)
+        if okEnv and type(env) == "table" then rawKey = env.key end
+    end
+    rawKey = rawKey or key -- global assigned directly by the wrapper chunk
+    local key = tostring(rawKey or ""):match("^%s*(.-)%s*$")
+
+    if key == "" then
+        return notify("[HWID] key missing. Use the script from Get Script.")
+    end
+    if not isValidHwid(key) then
+        return notify("[HWID] Invalid key (must be the HWID from your Get Script wrapper).")
     end
 
     local function getHwid()
@@ -24,18 +50,21 @@ do
     end
 
     local hwid = getHwid()
-    if not hwid then return warn("[HWID] Could not read HWID.") end
+    if not hwid then return notify("[HWID] Could not read HWID.") end
+    hwid = hwid:match("^%s*(.-)%s*$") -- trim: mirrors the server's .strip()
 
-    -- Mirror of the server's HWID_RE: 8-256 chars from  A-Za-z0-9 . _ - + = / { }
-    if #hwid < 8 or #hwid > 256 or hwid:match("[^A-Za-z0-9%.%_%+%=%/%{%}%-]") then
-        return warn("[HWID] Executor returned an HWID in an unexpected format.")
+    if not isValidHwid(hwid) then
+        return notify("[HWID] Executor returned an HWID in an unexpected format.")
     end
 
+    -- Exact JSON the aiohttp /api/script endpoint expects:
+    --   {"key": "<HWID from the wrapper>", "hwid": "<locally detected HWID>"}
+    -- Content-Type must be application/json for aiohttp's request.json().
     local ok, res = pcall(httpRequest, {
         Url = API_URL,
         Method = "POST",
         Headers = { ["Content-Type"] = "application/json" },
-        Body = HttpService:JSONEncode({ userid = USER_ID, hwid = hwid }),
+        Body = HttpService:JSONEncode({ key = key, hwid = hwid }),
     })
 
     -- Executors differ on response field casing (Body vs body)
@@ -43,25 +72,32 @@ do
     if ok and type(res) == "table" then
         local body = res.Body or res.body
         if type(body) == "string" and #body > 0 then
-            pcall(function() data = HttpService:JSONDecode(body) end)
+            pcall(function() data = HttpService:JSONDecode(body) end) -- invalid JSON -> data stays nil
         end
     end
+    if type(data) ~= "table" then data = nil end -- "true"/"5"/"null" are not valid responses
 
     if not (data and data.success) then
         local reason
-        if data and type(data.message) == "string" then
+        if data and type(data.message) == "string" and #data.message > 0 then
             reason = data.message -- server's own message, e.g. "HWID not registered or does not match. Register first."
         elseif not ok or type(res) ~= "table" then
             reason = "HWID check failed (request error). Register first."
+        elseif data then
+            reason = "HWID check failed (server sent no error message). Register first."
         else
-            reason = "HWID check failed (HTTP " .. tostring(res.StatusCode or res.status or res.code or "?") .. "). Register first."
+            reason = "HWID check failed (HTTP "
+                .. tostring(res.StatusCode or res.status_code or res.status or res.code or "?")
+                .. ", non-JSON response). Register first."
         end
-        return warn("[HWID] " .. reason)
+        return notify("[HWID] " .. reason)
     end
 
-    -- Success: fall through and let the main script below run.
-    -- Do NOT loadstring(data.script)() here -- the server's "script" field is the
-    -- wrapper that re-loads this same loader, so it would loop this check forever.
+    -- Authorized: fall through and let the main script below run.
+    -- data.script is deliberately IGNORED. It contains the loader wrapper
+    -- (key="<hwid>"; loadstring(...)); executing or loadstring-ing it here would
+    -- re-run this check in an infinite loop. The response exists for
+    -- authorization testing only.
 end
 -- ===== END HWID CHECK =====
 
